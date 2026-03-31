@@ -87,6 +87,7 @@ impl FactoryComponent for ClockAdjustmentRow {
                                 ClockspeedType::MinMemoryClock => fl!(I18N, "min-vram-clock"),
                                 ClockspeedType::MinVoltage => fl!(I18N, "min-gpu-voltage"),
                                 ClockspeedType::VoltageOffset => fl!(I18N, "gpu-voltage-offset"),
+                                ClockspeedType::VoltageOffsetPerZone(zone) => fl!(I18N, "gpu-vf-zone-offset", zone = zone),
                                 ClockspeedType::GpuClockOffset(pstate) => fl!(I18N, "gpu-pstate-clock-offset", pstate = pstate),
                                 ClockspeedType::MemClockOffset(pstate) => fl!(I18N, "vram-pstate-clock-offset", pstate = pstate),
                                 ClockspeedType::GpuVfCurveClock(pstate) => fl!(I18N, "gpu-pstate-clock", pstate = pstate),

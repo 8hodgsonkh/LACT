@@ -7,10 +7,11 @@ members = [
     "lact-schema",
     "lact-client",
     "lact-daemon",
+    "amdgpu-sysfs",
 ]
 
 [workspace.dependencies]
-amdgpu-sysfs = { version = "0.19.2", features = ["serde"] }
+amdgpu-sysfs = { path = "amdgpu-sysfs", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_with = { version = "3.5.0", default-features = false, features = [
     "macros",

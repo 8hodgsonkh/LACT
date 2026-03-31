@@ -85,6 +85,12 @@ pub struct ClocksConfiguration {
     )]
     pub mem_vf_curve: IndexMap<u8, CurvePoint>,
     pub voltage_offset: Option<i32>,
+    #[serde(
+        default,
+        skip_serializing_if = "IndexMap::is_empty",
+        deserialize_with = "int_map::deserialize"
+    )]
+    pub voltage_offset_per_zone: IndexMap<u8, i32>,
 }
 
 #[skip_serializing_none]
@@ -141,6 +147,14 @@ impl GpuConfig {
             ClockspeedType::MinMemoryClock => clocks.min_memory_clock = value,
             ClockspeedType::MinVoltage => clocks.min_voltage = value,
             ClockspeedType::VoltageOffset => clocks.voltage_offset = value,
+            ClockspeedType::VoltageOffsetPerZone(zone) => match value {
+                Some(value) => {
+                    clocks.voltage_offset_per_zone.insert(zone, value);
+                }
+                None => {
+                    clocks.voltage_offset_per_zone.shift_remove(&zone);
+                }
+            },
             ClockspeedType::GpuClockOffset(pstate) => match value {
                 Some(value) => {
                     clocks.gpu_clock_offsets.insert(pstate, value);

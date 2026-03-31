@@ -1,0 +1,22 @@
+---
+source: src/gpu_handle/power_profile_mode.rs
+expression: table
+---
+modes:
+  1:
+    name: 3D_FULL_SCREEN
+    components: []
+  3:
+    name: VIDEO
+    components: []
+  4:
+    name: VR
+    components: []
+  5:
+    name: COMPUTE
+    components: []
+  6:
+    name: CUSTOM
+    components: []
+value_names: []
+active: 3

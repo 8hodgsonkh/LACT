@@ -1440,6 +1440,10 @@ fn apply_clocks_config_to_table(
             None => table.voltage_offset = None,
         }
 
+        for (&zone, &offset) in &config.voltage_offset_per_zone {
+            table.set_voltage_offset_per_zone(zone as usize, offset)?;
+        }
+
         if let Some(offset) = config.gpu_clock_offsets.get(&0) {
             table.sclk_offset = Some(*offset);
         }

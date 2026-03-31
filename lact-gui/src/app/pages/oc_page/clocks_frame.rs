@@ -506,6 +506,28 @@ impl ClocksFrame {
                         ClocksData::new(current, min, max),
                     );
                 }
+
+                if !table.voltage_offset_per_zone.is_empty() {
+                    let (min, max) = table
+                        .od_range
+                        .voltage_offset
+                        .and_then(|range| range.into_full())
+                        .unwrap_or((-DEFAULT_VOLTAGE_OFFSET_RANGE, DEFAULT_VOLTAGE_OFFSET_RANGE));
+
+                    for (zone, offset) in table.voltage_offset_per_zone.iter().enumerate() {
+                        let mut data = ClocksData::new(*offset, min, max);
+                        if let Some(&(flow, fhigh)) = table.voltage_offset_zone_freq_ranges.get(zone) {
+                            data.custom_title = Some(format!(
+                                "V/F Zone {} offset (mV) [{}-{}MHz]",
+                                zone, flow, fhigh
+                            ));
+                        }
+                        self.set_clock(
+                            ClockspeedType::VoltageOffsetPerZone(zone as u8),
+                            data,
+                        );
+                    }
+                }
             }
         }
     }
