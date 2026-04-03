@@ -500,20 +500,38 @@ fn parse_voltage_offset_line(line: &str, i: usize) -> Result<i32> {
     }
 }
 
+/// Convert a frequency value that may be a raw IEEE 754 float (GHz) stored as u32.
+/// The kernel's Droop_PWL_F[] stores frequencies as floats in GHz but prints them
+/// as raw uint32. Values like 1073741824 (0x40000000) are actually 2.0 GHz.
+/// Real MHz values are always < 100000, so anything above that is a raw float.
+fn decode_freq_mhz(raw: u32) -> u32 {
+    if raw > 100_000 {
+        // Reinterpret as IEEE 754 float (GHz), convert to MHz
+        let ghz = f32::from_bits(raw);
+        if ghz.is_finite() && ghz >= 0.0 && ghz < 10.0 {
+            (ghz * 1000.0) as u32
+        } else {
+            raw // Fallback if not a sensible GHz value
+        }
+    } else {
+        raw // Already in MHz
+    }
+}
+
 fn parse_indexed_voltage_offset_line(line: &str, i: usize) -> Result<(i32, Option<(u32, u32)>)> {
     // Format: "N: XmV" or "N: XmV Y-ZMHz"
     match line.split_once(':') {
         Some((_, value_part)) => {
             let value_part = value_part.trim();
             // Check if there's a frequency range after the mV value
-            // e.g. "-30mV 500-1000MHz"
+            // e.g. "-30mV 500-1000MHz" or "-31mV 1073741824-1075838976MHz"
             let (mv_part, freq_range) = if let Some(mv_end) = value_part.find("mV") {
                 let after_mv = value_part[mv_end + 2..].trim();
                 if after_mv.ends_with("MHz") {
                     let freq_str = &after_mv[..after_mv.len() - 3];
                     if let Some((low, high)) = freq_str.split_once('-') {
-                        let low: u32 = low.trim().parse().unwrap_or(0);
-                        let high: u32 = high.trim().parse().unwrap_or(0);
+                        let low: u32 = decode_freq_mhz(low.trim().parse().unwrap_or(0));
+                        let high: u32 = decode_freq_mhz(high.trim().parse().unwrap_or(0));
                         (&value_part[..mv_end + 2], Some((low, high)))
                     } else {
                         (value_part, None)

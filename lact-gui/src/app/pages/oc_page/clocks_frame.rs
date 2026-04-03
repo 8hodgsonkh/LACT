@@ -494,7 +494,10 @@ impl ClocksFrame {
                     }
                 }
 
-                if let Some(current) = table.voltage_offset {
+                if !table.voltage_offset_per_zone.is_empty() {
+                    // Per-zone mode: hide the global slider since it just
+                    // reads zone[0] and writing it would overwrite all zones
+                } else if let Some(current) = table.voltage_offset {
                     let (min, max) = table
                         .od_range
                         .voltage_offset
