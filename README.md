@@ -1,4 +1,23 @@
-# Linux GPU Control Application
+# Linux GPU Control Application (Fork — Per-Zone V/F Curve)
+
+> **This is a fork of [LACT](https://github.com/ilya-zlobintsev/LACT) with per-zone voltage/frequency curve offset support for RDNA 3 GPUs.**
+>
+> AMD's RDNA 3 GPUs have 6 independent voltage offset zones (`VoltageOffsetPerZoneBoundary[6]`) in the overdrive table, but the stock kernel driver writes the same value to all of them. This fork adds per-zone control — so you can set different voltage offsets for different frequency ranges on the V/F curve.
+>
+> **What's changed:**
+> - **amdgpu-sysfs** — parses the new `OD_VF_CURVE_OFFSETS` sysfs section (requires kernel patch)
+> - **lact-daemon** — applies per-zone voltage offsets independently
+> - **lact-gui** — shows 6 individual zone sliders instead of a single global one
+>
+> **Requires a kernel patch** — see [`kernel-patches/rdna3-vf-curve.patch`](kernel-patches/rdna3-vf-curve.patch) for `smu_v13_0_0_ppt.c` (Navi 31/32/33). This adds the `OD_VF_CURVE_OFFSETS` sysfs section and a per-zone write path (`vo <zone> <offset>`). Without the patch, LACT works normally with just the global offset.
+>
+> **Status:** Working. The SMU responds to per-zone values — tested on a 7900 XTX and saw real differences in power draw and vcore at different frequency ranges. Zone frequency labels still need work (the PPTable stores boundaries as IEEE 754 floats in uint32 fields).
+>
+> Branch: `per-zone-vf-curve`
+> — Haz
+
+---
+
 <a href="https://translate.fedoraproject.org/engage/lact/">
 <img src="https://translate.fedoraproject.org/widget/lact/svg-badge.svg" alt="Translation status" />
 </a>
