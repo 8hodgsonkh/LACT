@@ -1,6 +1,37 @@
---- a/drivers/gpu/drm/amd/pm/swsmu/smu13/smu_v13_0_0_ppt.c
-+++ b/drivers/gpu/drm/amd/pm/swsmu/smu13/smu_v13_0_0_ppt.c
-@@ -1206,10 +1206,12 @@
+--- a/drivers/gpu/drm/amd/pm/swsmu/smu13/smu_v13_0_0_ppt.c	2026-03-16 04:21:08.000000000 +0000
++++ b/drivers/gpu/drm/amd/pm/swsmu/smu13/smu_v13_0_0_ppt.c	2026-04-03 11:47:42.797264334 +0100
+@@ -1166,14 +1166,43 @@
+ 	return ret;
+ }
+ 
++/*
++ * Decode an IEEE 754 single-precision float stored as uint32 to an
++ * integer value in MHz.  Droop_PWL_F[] entries are zone boundary
++ * frequencies in GHz (e.g. 0x40000000 = 2.0 GHz = 2000 MHz).
++ *
++ * We must avoid FPU ops in kernel space, so this is pure integer math.
++ * Only positive, finite, "normal" values matter; everything else
++ * (zero, denorm, inf, nan, negative) returns 0.
++ */
++static uint32_t droop_pwl_f_to_mhz(uint32_t raw)
++{
++	uint32_t exp_biased, mantissa;
++	uint64_t significand;
++	int shift;
++
++	if (raw == 0 || (raw >> 31))
++		return 0;
++
++	exp_biased = (raw >> 23) & 0xFF;
++	mantissa   = raw & 0x7FFFFF;
++	significand = (1ULL << 23) | mantissa;
++	shift = 150 - (int)exp_biased;
++
++	return (shift >= 0 && shift < 32) ?
++		(uint32_t)(significand * 1000 >> shift) : 0;
++}
++
+ static int smu_v13_0_0_emit_clk_levels(struct smu_context *smu,
  				       enum smu_clk_type clk_type, char *buf,
  				       int *offset)
  {
@@ -13,47 +44,38 @@
  	int i, curr_freq, size = *offset, start_offset = *offset;
  	struct smu_dpm_table *single_dpm_table = NULL;
  	struct smu_pcie_table *pcie_table;
-@@ -1294,6 +1296,38 @@
+@@ -1258,6 +1287,30 @@
  		size += sysfs_emit_at(buf, size, "OD_VDDGFX_OFFSET:\n");
  		size += sysfs_emit_at(buf, size, "%dmV\n",
  				      od_table->OverDriveTable.VoltageOffsetPerZoneBoundary[0]);
 +
 +		/*
-+		 * Display per-zone VF curve offsets with frequency ranges.
-+		 * Droop_PWL_F[] contains zone boundary frequencies as IEEE 754
-+		 * float values in GHz — convert to MHz for display.
-+		 * Zone boundaries are fixed hardware fuse values, independent
-+		 * of OD limits.
++		 * Per-zone V/F curve offsets.  Zone boundaries come from
++		 * Droop_PWL_F[] — fixed silicon RTAVFS fuse breakpoints.
++		 * The GPU clock naturally falls into the applicable zone.
 +		 */
 +		size += sysfs_emit_at(buf, size, "OD_VF_CURVE_OFFSETS:\n");
 +		for (i = 0; i < PP_NUM_OD_VF_CURVE_POINTS; i++) {
-+			if (i == 0) {
++			if (i == 0)
 +				flow_mhz = 0;
-+			} else {
-+				uint32_t raw = pptable->SkuTable.Droop_PWL_F[i - 1];
-+				float ghz;
-+				memcpy(&ghz, &raw, sizeof(float));
-+				flow_mhz = (uint32_t)(ghz * 1000.0f);
-+			}
-+			if (i < PP_NUM_RTAVFS_PWL_ZONES) {
-+				uint32_t raw = pptable->SkuTable.Droop_PWL_F[i];
-+				float ghz;
-+				memcpy(&ghz, &raw, sizeof(float));
-+				fhigh_mhz = (uint32_t)(ghz * 1000.0f);
-+			} else {
-+				struct smu_dpm_table *gfx_table =
-+					&dpm_context->dpm_tables.gfx_table;
-+				fhigh_mhz = SMU_DPM_TABLE_MAX(gfx_table);
-+			}
-+			size += sysfs_emit_at(buf, size, "%d: %dmV %u-%uMHz\n",
-+					      i,
-+					      od_table->OverDriveTable.VoltageOffsetPerZoneBoundary[i],
-+					      flow_mhz, fhigh_mhz);
++			else
++				flow_mhz = droop_pwl_f_to_mhz(
++					pptable->SkuTable.Droop_PWL_F[i - 1]);
++			if (i < PP_NUM_RTAVFS_PWL_ZONES)
++				fhigh_mhz = droop_pwl_f_to_mhz(
++					pptable->SkuTable.Droop_PWL_F[i]);
++			else
++				fhigh_mhz = 0;
++			size += sysfs_emit_at(buf, size,
++				"%d: %dmV %u-%uMHz\n",
++				i,
++				od_table->OverDriveTable.VoltageOffsetPerZoneBoundary[i],
++				flow_mhz, fhigh_mhz);
 +		}
  		break;
  
  	case SMU_OD_FAN_CURVE:
-@@ -1709,15 +1730,30 @@
+@@ -1673,15 +1726,29 @@
  						  PP_OD_FEATURE_GFX_VF_CURVE,
  						  &minimum,
  						  &maximum);
@@ -62,10 +84,6 @@
 -			dev_info(adev->dev, "Voltage offset (%ld) must be within [%d, %d]!\n",
 -				 input[0], minimum, maximum);
 -			return -EINVAL;
--		}
- 
--		for (i = 0; i < PP_NUM_OD_VF_CURVE_POINTS; i++)
--			od_table->OverDriveTable.VoltageOffsetPerZoneBoundary[i] = input[0];
 +		if (size == 2) {
 +			/* Per-zone mode: vo <zone_index> <offset_mV> */
 +			if (input[0] < 0 || input[0] >= PP_NUM_OD_VF_CURVE_POINTS) {
@@ -88,7 +106,10 @@
 +			}
 +			for (i = 0; i < PP_NUM_OD_VF_CURVE_POINTS; i++)
 +				od_table->OverDriveTable.VoltageOffsetPerZoneBoundary[i] = input[0];
-+		}
+ 		}
+-
+-		for (i = 0; i < PP_NUM_OD_VF_CURVE_POINTS; i++)
+-			od_table->OverDriveTable.VoltageOffsetPerZoneBoundary[i] = input[0];
  		od_table->OverDriveTable.FeatureCtrlMask |= BIT(PP_OD_FEATURE_GFX_VF_CURVE_BIT);
  		break;
  
