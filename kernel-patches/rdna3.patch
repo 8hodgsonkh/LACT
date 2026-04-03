@@ -1,0 +1,159 @@
+--- a/drivers/gpu/drm/amd/pm/swsmu/smu13/smu_v13_0.c	2026-02-25 19:38:12.334728259 +0000
++++ b/drivers/gpu/drm/amd/pm/swsmu/smu13/smu_v13_0.c	2026-02-25 19:38:48.399567714 +0000
+@@ -46,6 +46,8 @@
+ #include "asic_reg/smuio/smuio_13_0_2_offset.h"
+ #include "asic_reg/smuio/smuio_13_0_2_sh_mask.h"
+ 
++#include "smu13_driver_if_v13_0_7.h"
++
+ /*
+  * DO NOT use these for err/warn/info/debug messages.
+  * Use dev_err, dev_warn, dev_info and dev_dbg instead.
+@@ -1602,10 +1604,22 @@
+ 	int ret = 0, i;
+ 	bool auto_level = false;
+ 
++	/*
++	 * Use overdrive table values for GFX/MEM clocks so that
++	 * user-configured OD limits are respected in all modes.
++	 */
++	OverDriveTableExternal_t *od_table =
++		(OverDriveTableExternal_t *)smu->smu_table.overdrive_table;
++	uint32_t od_gfxclk_min = od_table ? od_table->OverDriveTable.GfxclkFmin : 0;
++	uint32_t od_gfxclk_max = od_table ? od_table->OverDriveTable.GfxclkFmax : 0;
++	uint32_t od_uclk_max   = od_table ? od_table->OverDriveTable.UclkFmax : 0;
++
+ 	switch (level) {
+ 	case AMD_DPM_FORCED_LEVEL_HIGH:
+-		sclk_min = sclk_max = SMU_DPM_TABLE_MAX(gfx_table);
+-		mclk_min = mclk_max = SMU_DPM_TABLE_MAX(mem_table);
++		sclk_min = od_gfxclk_min ? od_gfxclk_min : SMU_DPM_TABLE_MIN(gfx_table);
++		sclk_max = od_gfxclk_max ? od_gfxclk_max : SMU_DPM_TABLE_MAX(gfx_table);
++		mclk_min = SMU_DPM_TABLE_MIN(mem_table);
++		mclk_max = od_uclk_max ? od_uclk_max : SMU_DPM_TABLE_MAX(mem_table);
+ 		socclk_min = socclk_max = SMU_DPM_TABLE_MAX(soc_table);
+ 		vclk_min = vclk_max = SMU_DPM_TABLE_MAX(vclk_table);
+ 		dclk_min = dclk_max = SMU_DPM_TABLE_MAX(dclk_table);
+@@ -1620,8 +1634,10 @@
+ 		fclk_min = fclk_max = SMU_DPM_TABLE_MIN(fclk_table);
+ 		break;
+ 	case AMD_DPM_FORCED_LEVEL_AUTO:
+-		sclk_min = SMU_DPM_TABLE_MIN(gfx_table);
+-		sclk_max = SMU_DPM_TABLE_MAX(gfx_table);
++		sclk_min = od_gfxclk_min ? od_gfxclk_min :
++			    SMU_DPM_TABLE_MIN(gfx_table);
++		sclk_max = od_gfxclk_max ? od_gfxclk_max :
++			    SMU_DPM_TABLE_MAX(gfx_table);
+ 		mclk_min = SMU_DPM_TABLE_MIN(mem_table);
+ 		mclk_max = SMU_DPM_TABLE_MAX(mem_table);
+ 		socclk_min = SMU_DPM_TABLE_MIN(soc_table);
+--- a/drivers/gpu/drm/amd/pm/swsmu/smu13/smu_v13_0_7_ppt.c	2026-02-25 19:38:12.335728253 +0000
++++ b/drivers/gpu/drm/amd/pm/swsmu/smu13/smu_v13_0_7_ppt.c	2026-02-25 19:40:06.979067568 +0000
+@@ -619,8 +619,11 @@
+ 		if (skutable->DriverReportedClocks.GameClockAc &&
+ 			(dpm_table->dpm_levels[dpm_table->count - 1].value >
+ 			skutable->DriverReportedClocks.GameClockAc)) {
+-			dpm_table->dpm_levels[dpm_table->count - 1].value =
+-				skutable->DriverReportedClocks.GameClockAc;
++			/*
++			 * GameClockAc capping disabled — let OD table control max.
++			 * dpm_table->dpm_levels[dpm_table->count - 1].value =
++			 *	skutable->DriverReportedClocks.GameClockAc;
++			 */
+ 		}
+ 	} else {
+ 		dpm_table->count = 1;
+@@ -1908,6 +1911,34 @@
+ 			else
+ 				smu->user_dpm_profile.user_od = true;
+ 		}
++
++		/*
++		 * Refresh internal DPM table to match OD values so that
++		 * force_clk_levels, AUTO, MANUAL and every other code path
++		 * that reads dpm_levels[].value uses the user's real limits
++		 * instead of the stale firmware-reported GameClockAc values.
++		 */
++		{
++			struct smu_13_0_dpm_context *dpm_ctx =
++				smu->smu_dpm.dpm_context;
++			struct smu_dpm_table *gfx_dpm =
++				&dpm_ctx->dpm_tables.gfx_table;
++			struct smu_dpm_table *uclk_dpm =
++				&dpm_ctx->dpm_tables.uclk_table;
++
++			if (gfx_dpm->count > 0 &&
++			    od_table->OverDriveTable.GfxclkFmax)
++				gfx_dpm->dpm_levels[gfx_dpm->count - 1].value =
++					od_table->OverDriveTable.GfxclkFmax;
++			if (gfx_dpm->count > 0 &&
++			    od_table->OverDriveTable.GfxclkFmin)
++				gfx_dpm->dpm_levels[0].value =
++					od_table->OverDriveTable.GfxclkFmin;
++			if (uclk_dpm->count > 0 &&
++			    od_table->OverDriveTable.UclkFmax)
++				uclk_dpm->dpm_levels[uclk_dpm->count - 1].value =
++					od_table->OverDriveTable.UclkFmax;
++		}
+ 		break;
+ 
+ 	default:
+@@ -1982,6 +2013,25 @@
+ 		min_freq = single_dpm_table->dpm_levels[soft_min_level].value;
+ 		max_freq = single_dpm_table->dpm_levels[soft_max_level].value;
+ 
++		/*
++		 * Override GFX min/max with OD values when the user selects
++		 * the extreme DPM levels, so LACT and manual pp_dpm_sclk
++		 * writes actually reach the user-configured OD clocks
++		 * instead of being capped by stale firmware DPM entries.
++		 */
++		if (clk_type == SMU_GFXCLK || clk_type == SMU_SCLK) {
++			OverDriveTableExternal_t *od =
++				(OverDriveTableExternal_t *)smu->smu_table.overdrive_table;
++			if (od) {
++				if (soft_max_level == single_dpm_table->count - 1 &&
++				    od->OverDriveTable.GfxclkFmax)
++					max_freq = od->OverDriveTable.GfxclkFmax;
++				if (soft_min_level == 0 &&
++				    od->OverDriveTable.GfxclkFmin)
++					min_freq = od->OverDriveTable.GfxclkFmin;
++			}
++		}
++
+ 		ret = smu_v13_0_set_soft_freq_limited_range(smu,
+ 							    clk_type,
+ 							    min_freq,
+@@ -2250,11 +2300,12 @@
+ 		pptable->SkuTable.DriverReportedClocks;
+ 
+ 	pstate_table->gfxclk_pstate.min = SMU_DPM_TABLE_MIN(gfx_table);
+-	if (driver_clocks.GameClockAc &&
+-	    (driver_clocks.GameClockAc < SMU_DPM_TABLE_MAX(gfx_table)))
+-		pstate_table->gfxclk_pstate.peak = driver_clocks.GameClockAc;
+-	else
+-		pstate_table->gfxclk_pstate.peak = SMU_DPM_TABLE_MAX(gfx_table);
++	/*
++	 * Use full DPM table max for peak — the DPM table top entry is
++	 * already updated to OD GfxclkFmax after OD commit, so this
++	 * reflects the user's actual configured maximum.
++	 */
++	pstate_table->gfxclk_pstate.peak = SMU_DPM_TABLE_MAX(gfx_table);
+ 
+ 	pstate_table->uclk_pstate.min = SMU_DPM_TABLE_MIN(mem_table);
+ 	pstate_table->uclk_pstate.peak = SMU_DPM_TABLE_MAX(mem_table);
+@@ -2271,12 +2322,8 @@
+ 	pstate_table->fclk_pstate.min = SMU_DPM_TABLE_MIN(fclk_table);
+ 	pstate_table->fclk_pstate.peak = SMU_DPM_TABLE_MAX(fclk_table);
+ 
+-	if (driver_clocks.BaseClockAc &&
+-	    driver_clocks.BaseClockAc < SMU_DPM_TABLE_MAX(gfx_table))
+-		pstate_table->gfxclk_pstate.standard = driver_clocks.BaseClockAc;
+-	else
+-		pstate_table->gfxclk_pstate.standard =
+-			SMU_DPM_TABLE_MAX(gfx_table);
++	/* Use DPM max for standard too — no more BaseClockAc cap */
++	pstate_table->gfxclk_pstate.standard = SMU_DPM_TABLE_MAX(gfx_table);
+ 	pstate_table->uclk_pstate.standard = SMU_DPM_TABLE_MAX(mem_table);
+ 	pstate_table->socclk_pstate.standard = SMU_DPM_TABLE_MIN(soc_table);
+ 	pstate_table->vclk_pstate.standard = SMU_DPM_TABLE_MIN(vclk_table);
